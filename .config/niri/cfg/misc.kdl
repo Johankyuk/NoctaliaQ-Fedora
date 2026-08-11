@@ -1,0 +1,27 @@
+    prefer-no-csd
+    screenshot-path null
+
+    environment {
+        ELECTRON_OZONE_PLATFORM_HINT "auto"
+        QT_QPA_PLATFORM "wayland"
+        QT_QPA_PLATFORMTHEME "gtk3"
+        QT_WAYLAND_DISABLE_WINDOWDECORATION "1"
+        XDG_CURRENT_DESKTOP "niri"
+        XDG_SESSION_TYPE "wayland"
+        XCURSOR_THEME "Bibata-Modern-Classic"
+        XCURSOR_SIZE "30"
+    }
+
+    cursor {
+        xcursor-theme "Bibata-Modern-Classic"
+        xcursor-size 30
+    }
+
+    debug {
+        // Allows notification actions and window activation from Noctalia.
+        honor-xdg-activation-with-invalid-serial
+    }
+
+    hotkey-overlay {
+       skip-at-startup
+    }

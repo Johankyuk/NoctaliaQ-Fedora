@@ -1,0 +1,181 @@
+#!/usr/bin/env bash
+# noctaliaq-power — energía + ventiladores + GPU (Hybrid, laptop). Horus/NixOS (portado a NoctaliaQ, ver README de esta carpeta).
+#
+# MODELO (todo gira en torno al PERFIL, sin comandos por juego):
+#   La base es Hybrid. En BATERÍA la dGPU se autosuspende (D3cold, ~0W) cuando nada
+#   la usa; en AC NO llega a dormir: queda en idle P8 (~2W). Quién usa la dGPU lo
+#   deciden noctaliaq-gpu (por app) y noctaliaq-gpu-watch (env de sesión por fuente).
+#
+#   La configuración base es DECLARATIVA en horus-nix; no hay subcomando "setup":
+#     • autosuspensión dGPU    -> hardware.nvidia.powerManagement.finegrained
+#     • curvas quiet/balanced  -> modules/fan-curves.nix
+#     • curva performance      -> noctaliaq-gpu-watch (alta en AC, = balanced en batería)
+#     • comando de offload     -> nvidia-offload (prime.offload.enableOffloadCmd)
+#
+#   noctaliaq-power               wizard interactivo (sin argumentos).
+#   noctaliaq-power silencio      perfil power-saver (dGPU dormida en batería).
+#   noctaliaq-power equilibrado   perfil balanced.
+#   noctaliaq-power rendimiento   perfil performance.
+#   noctaliaq-power gpu-off       apaga la dGPU por firmware (requiere reinicio).
+#   noctaliaq-power gpu-on        la vuelve a encender (requiere reinicio).
+#   noctaliaq-power noheat [off]  ventiladores 100% (solo rendimiento + AC).
+#   noctaliaq-power --actual      estado (una línea por dato, para el launcher).
+set -uo pipefail
+P='\033[0;35m'; G='\033[0;32m'; Y='\033[1;33m'; R='\033[0;31m'; N='\033[0m'
+C='\033[0;36m'; D='\033[2m'
+log(){ echo -e "${P}[power]${N} $1"; }; ok(){ echo -e "${G}[+]${N} $1"; }
+warn(){ echo -e "${Y}[i]${N} $1"; }; err(){ echo -e "${R}[x]${N} $1"; }
+
+CURVA_MAX="20c:100%,40c:100%,55c:100%,65c:100%,75c:100%,85c:100%,90c:100%,95c:100%"
+
+ARMOURY=/sys/class/firmware-attributes/asus-armoury/attributes/dgpu_disable/current_value
+LEGACY=/sys/devices/platform/asus-nb-wmi/dgpu_disable
+PENDING=/sys/class/firmware-attributes/asus-armoury/attributes/pending_reboot
+if [ -e "$ARMOURY" ]; then DGPU="$ARMOURY"; else DGPU="$LEGACY"; fi
+
+_curva(){
+    command -v asusctl &>/dev/null || { warn "asusctl no disponible."; return 1; }
+    asusctl fan-curve --mod-profile "$1" --fan cpu --data "$2" &>/dev/null
+    asusctl fan-curve --mod-profile "$1" --fan gpu --data "$2" &>/dev/null
+    asusctl fan-curve --mod-profile "$1" --enable-fan-curves true &>/dev/null
+}
+_perfil(){
+    powerprofilesctl set "$1" 2>/dev/null && ok "Perfil de energía -> $1" \
+        || warn "No se pudo fijar $1 (¿power-profiles-daemon?)."
+}
+_en_ac(){ for p in /sys/class/power_supply/*/online; do
+        [ -r "$p" ] && [ "$(cat "$p" 2>/dev/null)" = "1" ] && return 0; done; return 1; }
+
+_dgpu_presente(){ ls /proc/driver/nvidia/gpus/ 2>/dev/null | grep -q . ; }
+_modo_actual(){ if _dgpu_presente; then echo Hybrid; else echo Integrated; fi; }
+_modo_pendiente(){
+    local dis; dis=$(cat "$DGPU" 2>/dev/null || echo '?')
+    case "$dis" in 0) echo Hybrid ;; 1) echo Integrated ;; *) echo '?' ;; esac
+}
+_estado_dgpu(){
+    if ! _dgpu_presente; then echo "apagada por firmware (no enumerada)"
+    elif nvidia-smi -q -d POWER &>/dev/null; then
+        echo "DESPIERTA ($(nvidia-smi --query-gpu=power.draw --format=csv,noheader 2>/dev/null))"
+    else echo "dormida (D3cold)"; fi
+}
+
+_dgpu_set(){ # $1 = 1 apagar | 0 encender
+    [ -e "$DGPU" ] || { err "No existe ningun nodo dgpu_disable."; return 1; }
+    local cur; cur=$(cat "$DGPU" 2>/dev/null)
+    [ "$cur" = "$1" ] && { ok "La dGPU ya esta asi (dgpu_disable=$cur)."; return 0; }
+    echo "$1" | sudo tee "$DGPU" >/dev/null 2>&1
+    local post; post=$(cat "$DGPU" 2>/dev/null)
+    if [ "$post" = "$1" ]; then
+        ok "dgpu_disable=$1 aplicado. REINICIA para que surta efecto."
+        [ -r "$PENDING" ] && log "pending_reboot: $(cat "$PENDING" 2>/dev/null)"
+        return 0
+    else
+        err "El firmware rechazo el cambio (sigue en $post)."
+        warn "Suele pasar con la dGPU en uso. Nodo: $DGPU"
+        return 1
+    fi
+}
+
+_pausa(){ echo ""; read -rsn1 -p "$(echo -e "  ${D}[cualquier tecla para volver]${N}")"; echo ""; }
+
+_ofrecer_reboot(){
+    echo ""
+    read -rp "  ¿Reiniciar ahora para aplicar? [s/N] " r
+    case "$r" in
+        [sS]) log "Reiniciando..."; systemctl reboot ;;
+        *) warn "Cambio guardado; aplica en el próximo reinicio." ; _pausa ;;
+    esac
+}
+
+_wizard(){
+    [ -t 0 ] || { echo "uso: noctaliaq-power [silencio|equilibrado|rendimiento|gpu-off|gpu-on|noheat [off]|--actual]"; return 0; }
+    local opt modo perfil ac g1 g2 p1 p2 p3
+    while true; do
+        modo=$(_modo_actual); pend=$(_modo_pendiente)
+        perfil=$(cat /sys/firmware/acpi/platform_profile 2>/dev/null || echo '?')
+        _en_ac && ac="conectado" || ac="batería"
+        [ "$pend" = Hybrid ]     && g1="●" || g1="○"
+        [ "$pend" = Integrated ] && g2="●" || g2="○"
+        [ "$perfil" = quiet ]       && p1="●" || p1="○"
+        [ "$perfil" = balanced ]    && p2="●" || p2="○"
+        [ "$perfil" = performance ] && p3="●" || p3="○"
+
+        printf '\033[2J\033[H'
+        echo -e "  ${P}HORUS · ENERGÍA${N}"
+        echo -e "  ${D}─────────────────────────────────────────────${N}"
+        echo -e "  GPU ${C}${modo}${N}   ·   Perfil ${C}${perfil}${N}   ·   AC ${C}${ac}${N}"
+        [ "$modo" != "$pend" ] && echo -e "  ${Y}⟳ pendiente: ${pend} tras reiniciar${N}"
+        echo ""
+        echo -e "  ${P}GPU${N}  ${D}(requiere reinicio)${N}"
+        echo -e "   ${g1} ${C}1${N}  Híbrida      ${D}dGPU disponible: juegos, CUDA${N}"
+        echo -e "   ${g2} ${C}2${N}  Integrada    ${D}dGPU apagada por firmware, +batería${N}"
+        echo ""
+        echo -e "  ${P}Perfil de energía${N}  ${D}(inmediato)${N}"
+        echo -e "   ${p1} ${C}3${N}  Silencio"
+        echo -e "   ${p2} ${C}4${N}  Equilibrado"
+        echo -e "   ${p3} ${C}5${N}  Rendimiento"
+        echo ""
+        echo -e "  ${P}Ventiladores${N}"
+        echo -e "     ${C}6${N}  Al 100%      ${D}solo en rendimiento + AC${N}"
+        echo -e "     ${C}7${N}  Restaurar    ${D}devuelve la curva a noctaliaq-gpu-watch${N}"
+        echo ""
+        echo -e "     ${C}0${N}  Salir"
+        echo ""
+        read -rsn1 -p "$(echo -e "  ${P}>${N} ")" opt
+        echo ""
+        case "$opt" in
+            1) if [ "$pend" = Hybrid ]; then ok "Híbrida ya está seleccionada."; _pausa
+               else _dgpu_set 0 && _ofrecer_reboot || _pausa; fi ;;
+            2) if [ "$pend" = Integrated ]; then ok "Integrada ya está seleccionada."; _pausa
+               else
+                 warn "La dGPU quedará apagada: sin CUDA, sin PRIME offload."
+                 read -rp "  ¿Continuar? [s/N] " r
+                 case "$r" in [sS]) _dgpu_set 1 && _ofrecer_reboot || _pausa ;; *) log "Cancelado."; _pausa ;; esac
+               fi ;;
+            3) _perfil power-saver; _pausa ;;
+            4) _perfil balanced;    _pausa ;;
+            5) _perfil performance; _pausa ;;
+            6) if [ "$perfil" != performance ]; then err "noheat solo en rendimiento (estás en '$perfil')."
+               elif ! _en_ac; then err "noheat solo con cargador conectado."
+               else _curva performance "$CURVA_MAX" && ok "Ventiladores al 100%."; fi
+               _pausa ;;
+            7) systemctl --user restart noctaliaq-gpu-watch 2>/dev/null \
+                 && ok "Curva restaurada por noctaliaq-gpu-watch." \
+                 || err "No pude reiniciar noctaliaq-gpu-watch."
+               _pausa ;;
+            0|q|Q) printf '\033[2J\033[H'; return 0 ;;
+            *) ;;
+        esac
+    done
+}
+
+case "${1:-}" in
+    silencio|eco|ahorro) _perfil power-saver ;;
+    equilibrado|equi|eq) _perfil balanced ;;
+    rendimiento|rend|re) _perfil performance ;;
+    gpu-off)             _dgpu_set 1 ;;
+    gpu-on)              _dgpu_set 0 ;;
+    noheat)
+        if [ "${2:-on}" = "off" ]; then
+            systemctl --user restart noctaliaq-gpu-watch 2>/dev/null \
+                && ok "Curva de rendimiento restaurada por noctaliaq-gpu-watch." \
+                || err "No pude reiniciar noctaliaq-gpu-watch."
+            exit 0
+        fi
+        prof=$(cat /sys/firmware/acpi/platform_profile 2>/dev/null)
+        [ "$prof" = performance ] || { err "noheat solo en rendimiento (estás en '${prof:-?}')."; exit 1; }
+        _en_ac || { err "noheat solo con cargador conectado."; exit 1; }
+        _curva performance "$CURVA_MAX" && ok "Ventiladores al 100%. Restaura: noctaliaq-power noheat off"
+        ;;
+    --actual|actual)
+        _act=$(_modo_actual); _pend=$(_modo_pendiente)
+        if [ "$_act" = "$_pend" ]; then echo "Modo GPU:   $_act"
+        else echo "Modo GPU:   $_act -> $_pend (tras reinicio)"; fi
+        echo "Perfil:     $(cat /sys/firmware/acpi/platform_profile 2>/dev/null || echo '?')"
+        echo "dGPU:       $(_estado_dgpu)"
+        _en_ac && echo "AC:         conectado" || echo "AC:         batería"
+        ;;
+    --help|-h) echo "uso: noctaliaq-power [silencio|equilibrado|rendimiento|gpu-off|gpu-on|noheat [off]|--actual]" ;;
+    "") _wizard ;;
+    *) err "opción desconocida: $1"; echo "uso: noctaliaq-power [silencio|equilibrado|rendimiento|gpu-off|gpu-on|noheat [off]|--actual]"; exit 1 ;;
+esac

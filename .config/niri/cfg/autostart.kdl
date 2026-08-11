@@ -1,0 +1,7 @@
+// ────────────── Startup Applications ──────────────
+// https://github.com/YaLTeR/niri/wiki/Configuration:-Miscellaneous#spawn-sh-at-startup
+
+// Mantiene el panel interno en su modo nativo (evita que quede en 60Hz
+// tras un toggle de MUX Ultimate/Híbrido). Ver ../../refresh-lock/README.md
+spawn-sh-at-startup "$HOME/NoctaliaQ/refresh-lock/lock-panel-refresh-watch.sh"
+

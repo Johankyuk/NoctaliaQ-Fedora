@@ -1,0 +1,4 @@
+.config/gtk-3.0/noctalia.css
+.config/gtk-4.0/noctalia.css
+*.bak.*
+*.bak-*

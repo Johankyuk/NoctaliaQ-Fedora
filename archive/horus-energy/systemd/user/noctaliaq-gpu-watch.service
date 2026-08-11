@@ -1,0 +1,12 @@
+[Unit]
+Description=Vigilante de perfil GPU (PRIME por AC/bateria, fan curve performance)
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=/usr/local/bin/noctaliaq-gpu-watch
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=graphical-session.target

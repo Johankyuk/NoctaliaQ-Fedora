@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=NoctaliaQ: Recolor Folders (manual)
+Comment=Fallback manual — el recolor de folders+teclado ya corre solo al cambiar la paleta
+Exec=kitty --hold -e /home/kyu/NoctaliaQ/scripts/papirus-recolor.sh
+Icon=preferences-desktop-theme
+Terminal=false
+Categories=Utility;

@@ -1,0 +1,8 @@
+# NoctaliaQ: refuerza el limite de carga configurado (/etc/noctaliaq/battery.conf)
+# cada vez que udev ve la bateria (arranque, resume, cambios de AC). Corre
+# como root via udev, no necesita sudo ni permisos especiales.
+SUBSYSTEM=="power_supply", ATTR{type}=="Battery", ACTION=="add", \
+  RUN+="/home/kyu/NoctaliaQ-Fedora/scripts/noctaliaq-battery.sh apply"
+
+SUBSYSTEM=="power_supply", ATTR{type}=="Battery", ACTION=="change", \
+  RUN+="/home/kyu/NoctaliaQ-Fedora/scripts/noctaliaq-battery.sh apply"

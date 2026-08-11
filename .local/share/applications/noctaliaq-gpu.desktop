@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=NoctaliaQ: GPU
+Comment=Cambia entre modo iGPU, Hibrida y Ultimate (requiere reinicio)
+Exec=kitty --hold -e /home/kyu/NoctaliaQ/scripts/noctaliaq-gpu.sh
+Icon=preferences-desktop-display
+Terminal=false
+Categories=Utility;

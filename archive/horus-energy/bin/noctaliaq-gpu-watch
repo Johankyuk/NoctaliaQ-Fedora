@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# noctaliaq-gpu-watch — vigilante de perfil: en rendimiento+AC toda app NUEVA nace
+# en la dGPU (env de sesión PRIME); fuera de eso, iGPU por default y noctaliaq-gpu
+# decide por app. Las apps ya corriendo no migran (límite de híbrido).
+set -u
+VARS=(__NV_PRIME_RENDER_OFFLOAD __GLX_VENDOR_LIBRARY_NAME __VK_LAYER_NV_optimus DRI_PRIME)
+PERF_AC_CPU="30c:20%,45c:35%,55c:50%,65c:65%,75c:80%,85c:88%,95c:92%,100c:92%"
+PERF_AC_GPU="30c:25%,45c:40%,55c:55%,65c:70%,75c:85%,85c:90%,95c:92%,100c:92%"
+PERF_BAT="30c:0%,45c:10%,55c:20%,60c:30%,70c:45%,80c:65%,90c:85%,100c:100%"
+_hay_dgpu(){ grep -q 0x10de /sys/bus/pci/devices/*/vendor 2>/dev/null; }
+estado=""
+fuente=""
+_en_ac(){ for p in /sys/class/power_supply/*/online; do
+    [ -r "$p" ] && [ "$(cat "$p" 2>/dev/null)" = "1" ] && return 0; done; return 1; }
+while true; do
+  prof=$(cat /sys/firmware/acpi/platform_profile 2>/dev/null)
+  if _en_ac; then f="ac"; else f="bat"; fi
+  if [ "$f" != "$fuente" ]; then
+    if command -v powerprofilesctl >/dev/null; then
+      if [ "$f" = "ac" ]; then powerprofilesctl set balanced
+      else powerprofilesctl set power-saver; fi
+    fi
+    sudo -n /usr/local/bin/noctaliaq-cpu-cap "$f" >/dev/null 2>&1 || true
+    if command -v asusctl >/dev/null; then
+      if [ "$f" = "ac" ]; then
+        asusctl fan-curve --mod-profile performance --fan cpu --data "$PERF_AC_CPU" >/dev/null 2>&1 || true
+        asusctl fan-curve --mod-profile performance --fan gpu --data "$PERF_AC_GPU" >/dev/null 2>&1 || true
+      else
+        asusctl fan-curve --mod-profile performance --fan cpu --data "$PERF_BAT" >/dev/null 2>&1 || true
+        asusctl fan-curve --mod-profile performance --fan gpu --data "$PERF_BAT" >/dev/null 2>&1 || true
+      fi
+      asusctl fan-curve --mod-profile performance --enable-fan-curves true >/dev/null 2>&1 || true
+    fi
+    fuente="$f"
+  fi
+  if [ "$f" = "ac" ] && _hay_dgpu; then nuevo="dgpu"; else nuevo="igpu"; fi
+  if [ "$nuevo" != "$estado" ]; then
+    if [ "$nuevo" = "dgpu" ]; then
+      systemctl --user set-environment __NV_PRIME_RENDER_OFFLOAD=1 \
+        __GLX_VENDOR_LIBRARY_NAME=nvidia __VK_LAYER_NV_optimus=NVIDIA_only DRI_PRIME=1
+      dbus-update-activation-environment --systemd __NV_PRIME_RENDER_OFFLOAD=1 \
+        __GLX_VENDOR_LIBRARY_NAME=nvidia __VK_LAYER_NV_optimus=NVIDIA_only DRI_PRIME=1
+    else
+      systemctl --user unset-environment "${VARS[@]}"
+      dbus-update-activation-environment --systemd __NV_PRIME_RENDER_OFFLOAD=0 \
+        __GLX_VENDOR_LIBRARY_NAME= __VK_LAYER_NV_optimus= DRI_PRIME=
+    fi
+    estado="$nuevo"
+  fi
+  sleep 3
+done

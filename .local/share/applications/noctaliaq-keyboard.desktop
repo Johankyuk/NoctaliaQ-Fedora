@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=NoctaliaQ: Teclado
+Comment=Brillo y color de la retroiluminación del teclado
+Exec=kitty --hold -e /home/kyu/NoctaliaQ/scripts/noctaliaq-keyboard.sh
+Icon=input-keyboard
+Terminal=false
+Categories=Utility;

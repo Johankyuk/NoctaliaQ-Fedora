@@ -1,0 +1,12 @@
+[Unit]
+Description=NoctaliaQ: vigilante de recolor (folders + teclado) al cambiar la paleta
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=%h/NoctaliaQ-Fedora/scripts/noctaliaq-recolor-watch.sh
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=graphical-session.target

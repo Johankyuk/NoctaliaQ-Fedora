@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=NoctaliaQ: Límite de Batería
+Comment=Configura el porcentaje máximo de carga de la batería
+Exec=kitty --hold -e /home/kyu/NoctaliaQ/scripts/noctaliaq-battery.sh
+Icon=battery
+Terminal=false
+Categories=Utility;

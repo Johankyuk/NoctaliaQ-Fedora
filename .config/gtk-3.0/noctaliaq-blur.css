@@ -1,0 +1,19 @@
+/* Transparencia para que el blur global de niri se vea a través de GTK. */
+window.background, .background {
+    background-color: alpha(@window_bg_color, 0.55);
+}
+.view {
+    background-color: alpha(@view_bg_color, 0.6);
+}
+headerbar {
+    background-color: alpha(@headerbar_bg_color, 0.6);
+}
+popover, popover.background, popover contents {
+    background-color: alpha(@popover_bg_color, 0.88);
+}
+.sidebar, list.sidebar, placessidebar {
+    background-color: alpha(@sidebar_bg_color, 0.6);
+}
+dialog.background {
+    background-color: alpha(@dialog_bg_color, 0.75);
+}

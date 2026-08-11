@@ -1,0 +1,12 @@
+[Unit]
+Description=Curvas de ventilador quiet/balanced en asusd
+After=asusd.service
+Wants=asusd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/noctaliaq-fan-curves-apply
+
+[Install]
+WantedBy=multi-user.target
